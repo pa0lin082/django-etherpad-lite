@@ -1,7 +1,8 @@
 from django.db import models
 from django.db.models.signals import pre_delete
-from django.contrib.auth.models import User, Group
+from django.contrib.auth.models import  Group
 from django.utils.translation import ugettext_lazy as _
+from django.conf import settings
 
 from py_etherpad import EtherpadLiteClient
 
@@ -14,8 +15,15 @@ class PadServer(models.Model):
     title = models.CharField(max_length=256)
     url = models.URLField(
         max_length=256,
-        verify_exists=False,
+        # verify_exists=False,
         verbose_name=_('URL')
+    )
+    public_url = models.URLField(
+        max_length=256,
+        # verify_exists=False,
+        null=True,
+        blank=True,
+        verbose_name=_('Public URL')
     )
     apikey = models.CharField(max_length=256, verbose_name=_('API key'))
     notes = models.TextField(_('description'), blank=True)
@@ -33,11 +41,28 @@ class PadServer(models.Model):
         else:
             return "%s/api" % self.url
 
+    @property
+    def host(self):
+        if self.url[-1:] == '/':
+            return self.url[:-1]
+        else:
+            return self.url
+
+    @property
+    def public_host(self):
+        if self.public_url:
+            if self.public_url[-1:] == '/':
+                return self.public_url[:-1]
+            else:
+                return self.public_url
+        else:
+            return self.host
 
 class PadGroup(models.Model):
     """Schema and methods for etherpad-lite groups
     """
-    group = models.ForeignKey(Group)
+    group = models.ForeignKey(Group, null=True, blank=True)
+    groupName = models.CharField(max_length=256, null=False, blank=False, unique=True)
     groupID = models.CharField(max_length=256, blank=True)
     server = models.ForeignKey(PadServer)
 
@@ -45,7 +70,11 @@ class PadGroup(models.Model):
         verbose_name = _('group')
 
     def __unicode__(self):
-        return self.group.__unicode__()
+        if self.group:
+            return self.group.__unicode__()
+        elif self.groupName:
+            return self.groupName
+
 
     @property
     def epclient(self):
@@ -59,8 +88,7 @@ class PadGroup(models.Model):
 
     def EtherMap(self):
         result = self.epclient.createGroupIfNotExistsFor(
-            self.group.__unicode__() + self._get_random_id() +
-            self.group.id.__str__()
+            self.__unicode__() + self._get_random_id()
         )
         self.groupID = result['groupID']
         return result
@@ -74,6 +102,9 @@ class PadGroup(models.Model):
         # First find and delete all associated pads
         Pad.objects.filter(group=self).delete()
         return self.epclient.deleteGroup(self.groupID)
+
+
+
 
 
 def padGroupDel(sender, **kwargs):
@@ -100,7 +131,7 @@ pre_delete.connect(groupDel, sender=Group)
 class PadAuthor(models.Model):
     """Schema and methods for etherpad-lite authors
     """
-    user = models.ForeignKey(User)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL)
     authorID = models.CharField(max_length=256, blank=True)
     server = models.ForeignKey(PadServer)
     group = models.ManyToManyField(
@@ -159,6 +190,7 @@ class Pad(models.Model):
         return EtherpadLiteClient(self.server.apikey, self.server.apiurl)
 
     def Create(self):
+        print 'Create',self.group.groupID, self.name
         return self.epclient.createGroupPad(self.group.groupID, self.name)
 
     def Destroy(self):
